@@ -1,0 +1,12 @@
+name = Adyax Test
+description = Module for adyax test.
+core = 7.x
+package = Adyax test
+dependencies[] = features
+dependencies[] = taxonomy
+dependencies[] = text
+dependencies[] = locale
+features[features_api][] = api:2
+features[field_base][] = field_country_code
+features[field_instance][] = taxonomy_term-country_list-field_country_code
+features[taxonomy][] = country_list

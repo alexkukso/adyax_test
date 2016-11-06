@@ -1,0 +1,215 @@
+<?php
+/**
+ * @file
+ *
+ * Main module file.
+ */
+
+define('ADYAX_TEST_LANGUAGE_NEGOTIATION_URL', 'adyax-test-language-url');
+define('ADYAX_TEST_COUNTRIES_VOCABULARY_NAME', 'country_list');
+
+/**
+ * Implements hook_language_negotiation_info().
+ */
+function adyax_test_language_negotiation_info() {
+  return array(
+    ADYAX_TEST_LANGUAGE_NEGOTIATION_URL => array(
+      'callbacks' => array(
+        'language' => 'adyax_test_language_provider_callback',
+        'switcher' => 'adyax_test_language_switcher_callback',
+        'url_rewrite' => 'adyax_test_language_url_rewrite_callback',
+      ),
+      'file' => drupal_get_path('module', 'adyax_test') . '/adyax_test.module',
+      'weight' => -4,
+      'types' => array(LANGUAGE_TYPE_CONTENT, LANGUAGE_TYPE_INTERFACE, LANGUAGE_TYPE_URL),
+      'name' => t('Country language negotiation provider'),
+      'description' => t('Determine the language from the URL with prefix of country code.'),
+      'cache' => 0,
+    ),
+  );
+}
+
+/**
+ * Identify language via URL prefix.
+ *
+ * @param $languages
+ *   An array of valid language objects.
+ *
+ * @return string
+ *   A valid language code on success, FALSE otherwise.
+ */
+function adyax_test_language_provider_callback($languages) {
+  $language_url = FALSE;
+
+  if (!language_negotiation_get_any(ADYAX_TEST_LANGUAGE_NEGOTIATION_URL)) {
+    return $language_url;
+  }
+
+  // $_GET['q'] might not be available at this time, because
+  // path initialization runs after the language bootstrap phase.
+  list($language_code, $_GET['q']) = adyax_test_language_url_split_prefix(isset($_GET['q']) ? $_GET['q'] : NULL, $languages);
+  if ($language_code !== FALSE) {
+    $language_url = $language_code;
+  }
+
+  return $language_url;
+}
+
+/**
+ * Splits the given path into prefix and actual path.
+ *
+ * Parse the given path and return the language code identified by the prefix
+ * and the actual path.
+ *
+ * @param $path
+ *   The path to split.
+ * @param $languages
+ *   An array of valid languages.
+ *
+ * @return array
+ *   An array composed of:
+ *    - A langcode corresponding to the identified prefix on success,
+ *      FALSE otherwise.
+ *    - The path without the prefix on success, the given path otherwise.
+ */
+function adyax_test_language_url_split_prefix($path, $languages) {
+  $args = empty($path) ? array() : explode('/', $path);
+  $prefix = array_shift($args);
+
+  // Search prefix within enabled languages.
+  foreach ($languages as $language) {
+    if (strpos($prefix, '-') !== FALSE) {
+      list($country_code, $language_code) = explode('-', $prefix);
+      if (adyax_test_check_country($country_code)) {
+        if (!empty($language->prefix) && $language->prefix == $language_code) {
+          // Store country code in a static variable.
+          adyax_test_current_country($country_code);
+          // Rebuild $path with the language removed.
+          return array($language_code, implode('/', $args));
+        }
+      }
+    }
+  }
+
+  return array(FALSE, $path);
+}
+
+/**
+ * Checking country code in the country_list of taxonomy terms.
+ *
+ * @param $country_code
+ *   Country code to check.
+ *
+ * @return bool
+ *   TRUE if country exists, FALSE otherwise.
+ */
+function adyax_test_check_country($country_code) {
+  $query = db_select('taxonomy_term_data', 'td');
+  $query->join('field_data_field_country_code', 'fdcc', 'td.tid = fdcc.entity_id');
+  $query = $query->condition('fdcc.entity_type', 'taxonomy_term')
+    ->condition('fdcc.bundle', ADYAX_TEST_COUNTRIES_VOCABULARY_NAME)
+    ->condition('fdcc.deleted', 0)
+    ->condition('fdcc.field_country_code_value', $country_code);
+
+  $count = $query
+    ->countQuery()
+    ->execute()
+    ->fetchField();
+
+  if ($count) {
+    return TRUE;
+  }
+
+  return FALSE;
+}
+
+/**
+ * Return the URL language switcher block.
+ */
+function adyax_test_language_switcher_callback($type, $path) {
+  $languages = language_list('enabled');
+  $links = array();
+
+  foreach ($languages[1] as $language) {
+    $links[$language->language] = array(
+      'href' => $path,
+      'title' => $language->native,
+      'language' => $language,
+      'attributes' => array('class' => array('language-link')),
+    );
+  }
+
+  return $links;
+}
+
+/**
+ * Stores given country code in $_SESSION and returns it.
+ *
+ * @param $country_code
+ *   Current country code.
+ *
+ * @return string
+ *   Country code stored in $_SESSION.
+ */
+function adyax_test_current_country($country_code = '') {
+  static $storage;
+
+  if ($country_code) {
+    $storage = $country_code ;
+    $_SESSION['current_country'] = $country_code ;
+  }
+  else if (empty($storage) && isset($_SESSION['current_country'])) {
+    $storage = $_SESSION['current_country'];
+  }
+
+  return $storage;
+}
+
+/**
+ * Implements hook_language_init().
+ */
+function adyax_test_language_init() {
+  global $language, $language_url;
+
+  if ($language->provider == ADYAX_TEST_LANGUAGE_NEGOTIATION_URL) {
+    $country_code = adyax_test_current_country();
+    if (!empty($country_code) && !empty($language->prefix)) {
+      // Detected language and set new prefix.
+      $language_url = $language;
+      $language_url->prefix = $country_code . '-' . $language_url->prefix;
+    }
+  }
+}
+
+/**
+ * Rewrite URLs for the URL language provider.
+ */
+function adyax_test_language_url_rewrite_callback(&$path, &$options) {
+  static $drupal_static_fast;
+  if (!isset($drupal_static_fast)) {
+    $drupal_static_fast['languages'] = &drupal_static(__FUNCTION__);
+  }
+  $languages = &$drupal_static_fast['languages'];
+
+  if (!isset($languages)) {
+    $languages = language_list('enabled');
+    $languages = array_flip(array_keys($languages[1]));
+  }
+
+  // Language can be passed as an option, or we go for current URL language.
+  if (!isset($options['language'])) {
+    global $language_url;
+    $options['language'] = $language_url;
+  }
+  // We allow only enabled languages here.
+  elseif (!isset($languages[$options['language']->language])) {
+    unset($options['language']);
+    return;
+  }
+
+  if (isset($options['language'])) {
+    if (!empty($options['language']->prefix)) {
+      $options['prefix'] = $options['language']->prefix . '/';
+    }
+  }
+}
