@@ -81,7 +81,7 @@ function adyax_test_language_url_split_prefix($path, $languages) {
     if (strpos($prefix, '-') !== FALSE) {
       list($country_code, $language_code) = explode('-', $prefix);
       if (adyax_test_check_country($country_code)) {
-        if (!empty($language->prefix) && $language->prefix == $language_code) {
+        if (!empty($language->language) && $language->language == $language_code) {
           // Store country code in a static variable.
           adyax_test_current_country($country_code);
           // Rebuild $path with the language removed.
